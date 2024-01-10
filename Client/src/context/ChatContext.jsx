@@ -2,6 +2,7 @@
 import { createContext, useCallback, useEffect, useState } from "react";
 import { getRequest, baseUrl, postRequest } from "../utils/services";
 export const ChatContext = createContext();
+import { io } from "socket.io-client";
 
 export const ChatContextProvider = ({ children, user }) => {
   const [userChats, setUserChats] = useState(null);
@@ -14,9 +15,45 @@ export const ChatContextProvider = ({ children, user }) => {
   const [messageError, setMessageError] = useState(null);
   const [sendTextMessageError, setSendTextMessageError] = useState(null);
   const [newMessage, setNewMessage] = useState(null);
+  const [socket, setSocket] = useState(null);
+  const [onlineUsers, setOnlineUsers] = useState([]);
 
+  console.log(onlineUsers);
 
   useEffect(() => {
+    const newSocket = io("http://localhost:3000");
+    setSocket(newSocket);
+
+    return () => newSocket.disconnect();
+  }, [user]);
+
+  useEffect(() => {
+    if (socket === null) return;
+    socket.emit("addNewUser", user?._id);
+    socket.on("getOnlineUsers", (res) => {
+      setOnlineUsers(res);
+    });
+
+    return () => socket.off("getOnlineUsers");
+  }, [socket]);
+
+  useEffect(() => {
+    if (socket === null) return;
+    const recipientId = currentChat?.members.find((id)=> id !== user?._id);
+    socket.emit("sendMessage",{...newMessage,recipientId});
+  }, [newMessage]);
+
+  useEffect(() => {
+    if (socket === null) return;
+    socket.on("getMessage", (res) => {
+      if(currentChat?._id !== res.chatId) return;
+      setMessages((prev) => [...prev, res]);
+    });
+
+    return () => socket.off("getMessage");
+  }, [socket,currentChat]);
+
+  useEffect(() => {``
     const getUserChats = async () => {
       if (user?._id) {
         setUserChatsLoading(true);
@@ -62,9 +99,11 @@ export const ChatContextProvider = ({ children, user }) => {
     const getMessages = async () => {
       setIsMessagesLoading(true);
       setMessageError(null);
-      
-      const response = await getRequest(`${baseUrl}/messages/${currentChat?._id}`);
-      
+
+      const response = await getRequest(
+        `${baseUrl}/messages/${currentChat?._id}`
+      );
+
       setIsMessagesLoading(false);
       if (response.error) {
         setIsMessagesLoading(false);
@@ -75,20 +114,26 @@ export const ChatContextProvider = ({ children, user }) => {
     getMessages();
   }, [currentChat]);
 
-  const sendTextMessage = useCallback(async (textMessage, sender,currentChatId,setTextMessage) => {
-    if(!textMessage) return console.log("You must type something...");
-    const response = await postRequest(`${baseUrl}/messages`,JSON.stringify({
-      chatId: currentChatId,
-      senderId: sender._id,
-      text: textMessage,
-    }));
+  const sendTextMessage = useCallback(
+    async (textMessage, sender, currentChatId, setTextMessage) => {
+      if (!textMessage) return console.log("You must type something...");
+      const response = await postRequest(
+        `${baseUrl}/messages`,
+        JSON.stringify({
+          chatId: currentChatId,
+          senderId: sender._id,
+          text: textMessage,
+        })
+      );
 
-    if(response.error) return setSendTextMessageError(response);
+      if (response.error) return setSendTextMessageError(response);
 
-    setNewMessage(response);
-    setMessages((prev) => [...prev, response]);
-    setTextMessage("");
-  },[]);
+      setNewMessage(response);
+      setMessages((prev) => [...prev, response]);
+      setTextMessage("");
+    },
+    []
+  );
 
   const updateCurrentChat = useCallback((chat) => {
     setCurrentChat(chat);
@@ -126,6 +171,7 @@ export const ChatContextProvider = ({ children, user }) => {
         sendTextMessage,
         sendTextMessageError,
         newMessage,
+        onlineUsers,
       }}
     >
       {children}
